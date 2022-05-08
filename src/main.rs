@@ -4,9 +4,14 @@ use aws_lambda_events::{
 };
 use http::HeaderMap;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
+use simple_logger::SimpleLogger;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .init()
+        .unwrap();
     let handler_fn = service_fn(handler);
     lambda_runtime::run(handler_fn).await?;
     Ok(())
@@ -15,7 +20,23 @@ async fn main() -> Result<(), Error> {
 async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
 ) -> Result<ApiGatewayV2httpResponse, Error> {
-    let (_event, _context) = event.into_parts();
+    let (event, _context) = event.into_parts();
+    let user: &str;
+    let token: &str;
+    let mins: Vec<u32>;
+    match event.query_string_parameters.first("user") {
+        Some(usr) => user = usr,
+        None => return Ok(missing_required_parameter("user")),
+    }
+    match event.query_string_parameters.first("token") {
+        Some(t) => token = t,
+        None => return Ok(missing_required_parameter("token")),
+    }
+    match event.query_string_parameters.all("min") {
+        Some(min) => mins = min.iter().map(|m| m.parse::<u32>().unwrap()).collect(),
+        None => return Ok(missing_required_parameter("min")),
+    }
+    log::info!("user={user}, token={token}, mins={mins:?}");
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
         headers: HeaderMap::new(),
@@ -42,6 +63,19 @@ fn add_alerts(ics: String) -> String {
         })
         .collect::<Vec<&str>>()
         .join("\n")
+}
+
+fn missing_required_parameter(param: &str) -> ApiGatewayV2httpResponse {
+    ApiGatewayV2httpResponse {
+        status_code: 400,
+        headers: HeaderMap::new(),
+        multi_value_headers: HeaderMap::new(),
+        body: Some(Body::Text(format!(
+            "{{\"error\": \"Missing required parameter: '{param}'\"}}"
+        ))),
+        is_base64_encoded: Some(false),
+        cookies: vec![],
+    }
 }
 
 #[cfg(test)]
