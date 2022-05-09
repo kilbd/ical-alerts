@@ -36,12 +36,25 @@ async fn handler(
         Some(min) => mins = min.iter().map(|m| m.parse::<u32>().unwrap()).collect(),
         None => return Ok(missing_required_parameter("min")),
     }
-    log::info!("user={user}, token={token}, mins={mins:?}");
+    let start = std::time::Instant::now();
+    let ics = reqwest::get(format!(
+        "https://outlook.office365.com/owa/calendar/{user}/{token}/calendar.ics"
+    ))
+    .await?
+    .text()
+    .await?;
+    log::info!(
+        "Office365 response time: {} ms",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
+    let body = add_alerts(ics);
+    let mut headers = HeaderMap::new();
+    headers.append("Content-Type", "text/calendar".parse()?);
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
-        headers: HeaderMap::new(),
+        headers,
         multi_value_headers: HeaderMap::new(),
-        body: Some(Body::Text(String::from(""))),
+        body: Some(Body::Text(body)),
         is_base64_encoded: Some(false),
         cookies: vec![],
     })
