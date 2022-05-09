@@ -1,5 +1,6 @@
 import {
   aws_lambda as lambda,
+  aws_logs as logs,
   CfnOutput,
   CfnResource,
   Stack,
@@ -17,6 +18,7 @@ export class InfraStack extends Stack {
       handler: "alertHandler",
       code: lambda.Code.fromAsset("../lambdas/ics-alerts"),
       memorySize: 256,
+      logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
     const fnUrl = new CfnResource(this, "alertFnUrl", {
