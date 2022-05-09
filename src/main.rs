@@ -47,7 +47,7 @@ async fn handler(
         "Office365 response time: {} ms",
         start.elapsed().as_secs_f64() * 1000.0
     );
-    let body = add_alerts(ics);
+    let body = add_alerts(ics, mins);
     let mut headers = HeaderMap::new();
     headers.append("Content-Type", "text/calendar".parse()?);
     Ok(ApiGatewayV2httpResponse {
@@ -60,16 +60,25 @@ async fn handler(
     })
 }
 
-fn add_alerts(ics: String) -> String {
+fn add_alerts(ics: String, mins: Vec<u32>) -> String {
+    let mut alerts = mins
+        .iter()
+        .map(|m| {
+            format!(
+                "BEGIN:VALARM\n\
+                TRIGGER:-PT{m}M\n\
+                ACTION:DISPLAY\n\
+                END:VALARM\n"
+            )
+        })
+        .collect::<Vec<String>>();
+    alerts.push(String::from("END:VEVENT"));
+    let alerts = alerts.concat();
     ics.lines()
         .map(|line| {
             // Want to add alarm(s) just before end of event object
             if line == "END:VEVENT" {
-                "BEGIN:VALARM\n\
-                TRIGGER:-PT5M\n\
-                ACTION:DISPLAY\n\
-                END:VALARM\n\
-                END:VEVENT"
+                alerts.as_ref()
             } else {
                 line
             }
@@ -97,6 +106,7 @@ mod tests {
 
     #[test]
     fn test_add_alerts() {
+        let mins = vec![5];
         let fake_ics = String::from(
             "BEGIN:VCALENDAR\n\
             BEGIN:VEVENT\n\
@@ -113,7 +123,34 @@ mod tests {
             END:VEVENT\n\
             END:VCALENDAR",
         );
-        let new_ics = add_alerts(fake_ics);
+        let new_ics = add_alerts(fake_ics, mins);
+        assert_eq!(new_ics, expected);
+    }
+
+    #[test]
+    fn test_add_alerts_multiple_times() {
+        let mins = vec![10, 15];
+        let fake_ics = String::from(
+            "BEGIN:VCALENDAR\n\
+            BEGIN:VEVENT\n\
+            END:VEVENT\n\
+            END:VCALENDAR",
+        );
+        let expected = String::from(
+            "BEGIN:VCALENDAR\n\
+            BEGIN:VEVENT\n\
+            BEGIN:VALARM\n\
+            TRIGGER:-PT10M\n\
+            ACTION:DISPLAY\n\
+            END:VALARM\n\
+            BEGIN:VALARM\n\
+            TRIGGER:-PT15M\n\
+            ACTION:DISPLAY\n\
+            END:VALARM\n\
+            END:VEVENT\n\
+            END:VCALENDAR",
+        );
+        let new_ics = add_alerts(fake_ics, mins);
         assert_eq!(new_ics, expected);
     }
 }
