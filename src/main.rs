@@ -20,7 +20,7 @@ async fn main() -> Result<(), Error> {
 async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
 ) -> Result<ApiGatewayV2httpResponse, Error> {
-    let (event, _context) = event.into_parts();
+    let (mut event, _context) = event.into_parts();
     let user: &str;
     let token: &str;
     let mins: Vec<u32>;
@@ -36,22 +36,64 @@ async fn handler(
         Some(min) => mins = min.iter().map(|m| m.parse::<u32>().unwrap()).collect(),
         None => return Ok(missing_required_parameter("min")),
     }
+
+    let mut req_headers = HeaderMap::new();
+    // Amazon adds custom headers that we don't need to pass through.
+    // The following block filters them out.
+    event.headers.drain().for_each(|(name, val)| {
+        if let Some(n) = name {
+            if !n.as_str().to_lowercase().starts_with("x-") {
+                req_headers.insert(n, val);
+            }
+        }
+    });
+    log::info!(
+        "Client headers: {}",
+        req_headers
+            .iter()
+            .map(|(name, val)| format!("{name}:{}, ", val.to_str().unwrap()))
+            .collect::<String>()
+    );
+    let client = reqwest::Client::new();
     let start = std::time::Instant::now();
-    let ics = reqwest::get(format!(
-        "https://outlook.office365.com/owa/calendar/{user}/{token}/calendar.ics"
-    ))
-    .await?
-    .text()
-    .await?;
+    let resp = client
+        .get(format!(
+            "https://outlook.office365.com/owa/calendar/{user}/{token}/calendar.ics"
+        ))
+        .headers(req_headers)
+        .send()
+        .await?;
     log::info!(
         "Office365 response time: {} ms",
         start.elapsed().as_secs_f64() * 1000.0
     );
-    let body = add_alerts(ics, mins);
+    let mut status = 200;
+    let body: String;
     let mut headers = HeaderMap::new();
-    headers.append("Content-Type", "text/calendar".parse()?);
+    match resp.status() {
+        reqwest::StatusCode::OK => {
+            body = add_alerts(resp.text().await?, mins);
+            headers.append("Content-Type", "text/calendar".parse()?);
+        }
+        code => {
+            status = code.as_u16();
+            let resp_headers = resp
+                .headers()
+                .iter()
+                .map(|(name, val)| format!("{name}:{}, ", val.to_str().unwrap()))
+                .collect::<String>();
+            body = resp.text().await?;
+            log::error!(
+                "O365 request returned {} error. Body: '{}', Headers: {}",
+                status,
+                body,
+                resp_headers
+            )
+        }
+    }
+
     Ok(ApiGatewayV2httpResponse {
-        status_code: 200,
+        status_code: status as i64,
         headers,
         multi_value_headers: HeaderMap::new(),
         body: Some(Body::Text(body)),
